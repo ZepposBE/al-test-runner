@@ -15,6 +15,96 @@ let cachedMCPSettings: Map<string, MCPSettings | null> = new Map();
 let currentProjectContextNormalized: string | null = null;
 let currentProjectContextOriginal: string | null = null;
 
+// Active project state (synced from VS Code extension)
+interface ActiveProjectState {
+  projectPath: string;
+  timestamp: string;
+}
+
+// Cache for active project state to avoid reading file on every call
+let cachedActiveProjectState: ActiveProjectState | null = null;
+let activeProjectStateCacheTime: number = 0;
+const STATE_CACHE_TTL_MS = 1000; // 1 second cache to avoid excessive file reads
+
+/**
+ * Get the path to the active project state file
+ * This is set by the VS Code extension via environment variable
+ */
+export function getActiveProjectStatePath(): string | null {
+  return process.env.AL_ACTIVE_PROJECT_STATE_PATH || null;
+}
+
+/**
+ * Read the active project state from the state file
+ * The state file is written by the VS Code extension when the user switches files
+ * 
+ * @returns The active project state, or null if not available or expired
+ */
+export function readActiveProjectState(): ActiveProjectState | null {
+  const statePath = getActiveProjectStatePath();
+  if (!statePath) {
+    return null;
+  }
+
+  // Check cache first
+  const now = Date.now();
+  if (cachedActiveProjectState && (now - activeProjectStateCacheTime) < STATE_CACHE_TTL_MS) {
+    return cachedActiveProjectState;
+  }
+
+  if (!existsSync(statePath)) {
+    cachedActiveProjectState = null;
+    activeProjectStateCacheTime = now;
+    return null;
+  }
+
+  try {
+    const data = readFileSync(statePath, 'utf-8');
+    const state = JSON.parse(data) as ActiveProjectState;
+    
+    // Validate the state has required fields
+    if (!state.projectPath || !state.timestamp) {
+      cachedActiveProjectState = null;
+      activeProjectStateCacheTime = now;
+      return null;
+    }
+
+    // Check if state is stale (older than 5 minutes)
+    const stateTime = new Date(state.timestamp).getTime();
+    const MAX_STATE_AGE_MS = 5 * 60 * 1000; // 5 minutes
+    if ((now - stateTime) > MAX_STATE_AGE_MS) {
+      // State is too old, ignore it
+      cachedActiveProjectState = null;
+      activeProjectStateCacheTime = now;
+      return null;
+    }
+
+    // Verify the project path exists
+    if (!existsSync(state.projectPath)) {
+      cachedActiveProjectState = null;
+      activeProjectStateCacheTime = now;
+      return null;
+    }
+
+    cachedActiveProjectState = state;
+    activeProjectStateCacheTime = now;
+    return state;
+  } catch (error) {
+    console.error('Error reading active project state:', error);
+    cachedActiveProjectState = null;
+    activeProjectStateCacheTime = now;
+    return null;
+  }
+}
+
+/**
+ * Clear the active project state cache (useful for testing)
+ */
+export function clearActiveProjectStateCache(): void {
+  cachedActiveProjectState = null;
+  activeProjectStateCacheTime = 0;
+}
+
 /**
  * Normalize a path for consistent comparison and caching
  */
@@ -104,6 +194,17 @@ export function clearProjectContext(): void {
 }
 
 /**
+ * Directly set the project context path (for testing purposes)
+ * Unlike setProjectContextFromFile, this doesn't require app.json to exist
+ * 
+ * @param projectPath - The project root path to set
+ */
+export function setProjectContext(projectPath: string): void {
+  currentProjectContextNormalized = normalizePath(projectPath);
+  currentProjectContextOriginal = projectPath;
+}
+
+/**
  * Get the currently active project context
  * Returns the ORIGINAL (non-normalized) path for file operations
  */
@@ -126,7 +227,6 @@ export function getMCPSettingsPath(projectPath?: string): string {
   // Use original paths for file operations
   const basePath = projectPath 
     || currentProjectContextOriginal 
-    || process.env.AL_PROJECT_PATH 
     || process.cwd();
   return join(basePath, '.altestrunner', 'mcp-settings.json');
 }
@@ -142,7 +242,6 @@ export function getMCPSettings(projectPath?: string): MCPSettings | null {
   // For file operations, use original path
   const originalPath = projectPath 
     || currentProjectContextOriginal 
-    || process.env.AL_PROJECT_PATH 
     || process.cwd();
   
   const normalizedCacheKey = normalizePath(originalPath);
@@ -186,10 +285,11 @@ export function clearMCPSettingsCache(projectPath?: string): void {
 
 /**
  * Get the AL project path with priority resolution:
- * 1. Current project context (derived from filename)
- * 2. MCP Settings (projectPath)
- * 3. Environment variable (AL_PROJECT_PATH)
- * 4. Current working directory
+ * 1. Explicit contextPath parameter (derived from filename)
+ * 2. Active project state file (synced from VS Code extension)
+ * 3. Current project context (from previous operations)
+ * 4. MCP Settings (projectPath)
+ * 5. Current working directory
  * 
  * Returns the ORIGINAL path (preserves case) for file system operations.
  * 
@@ -207,20 +307,24 @@ export function getProjectPath(contextPath?: string): string {
     }
   }
   
-  // Priority 1: Current project context (use original path for file operations)
+  // Priority 1: Active project state (synced from VS Code extension)
+  const activeState = readActiveProjectState();
+  if (activeState?.projectPath && existsSync(activeState.projectPath)) {
+    // Update our context to match the active state
+    currentProjectContextNormalized = normalizePath(activeState.projectPath);
+    currentProjectContextOriginal = activeState.projectPath;
+    return activeState.projectPath;
+  }
+  
+  // Priority 2: Current project context (use original path for file operations)
   if (currentProjectContextOriginal && existsSync(currentProjectContextOriginal)) {
     return currentProjectContextOriginal;
   }
   
-  // Priority 2: MCP Settings (from current context or default)
+  // Priority 3: MCP Settings (from current context or default)
   const mcpSettings = getMCPSettings();
   if (mcpSettings?.projectPath && existsSync(mcpSettings.projectPath)) {
     return mcpSettings.projectPath;
-  }
-  
-  // Priority 3: Environment variable
-  if (process.env.AL_PROJECT_PATH) {
-    return process.env.AL_PROJECT_PATH;
   }
   
   // Priority 4: Current working directory

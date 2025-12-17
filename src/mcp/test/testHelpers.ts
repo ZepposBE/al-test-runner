@@ -107,17 +107,20 @@ export function createMockALProject(testDir: string, options: {
 }
 
 /**
- * Set up environment variables for a test
+ * Set up project context for a test
+ * This simulates setting the current project path for tests
  */
 export function setTestEnv(projectPath: string): void {
-    process.env.AL_PROJECT_PATH = projectPath;
+    // Import here to avoid circular dependencies
+    const { setProjectContext } = require('../utils/config');
+    // Directly set project context (doesn't require app.json to exist)
+    setProjectContext(projectPath);
 }
 
 /**
  * Clear test environment variables
  */
 export function clearTestEnv(): void {
-    delete process.env.AL_PROJECT_PATH;
     delete process.env.AL_CONTAINER_NAME;
     delete process.env.AL_TEST_RUNNER_PATH;
 }

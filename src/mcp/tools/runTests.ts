@@ -577,7 +577,7 @@ export async function listTestCodeunitsHandler() {
         content: [
           {
             type: 'text' as const,
-            text: 'No test codeunits found in the project.\n\nMake sure:\n- You have .al files with Subtype = Test\n- The AL_PROJECT_PATH environment variable is set correctly',
+            text: 'No test codeunits found in the project.\n\nMake sure:\n- You have .al files with Subtype = Test\n- The AL Test Runner extension is enabled and running\n- You have opened an .al file in the correct project',
           },
         ],
       };

@@ -425,7 +425,7 @@ export async function debugProjectContextHandler(args?: { testFilePath?: string 
       platform: process.platform,
       cwd: process.cwd(),
       environmentVariables: {
-        AL_PROJECT_PATH: process.env.AL_PROJECT_PATH || null,
+        AL_ACTIVE_PROJECT_STATE_PATH: process.env.AL_ACTIVE_PROJECT_STATE_PATH || null,
         AL_CONTAINER_NAME: process.env.AL_CONTAINER_NAME || null,
         AL_TEST_RUNNER_PATH: process.env.AL_TEST_RUNNER_PATH || null,
       },

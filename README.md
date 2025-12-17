@@ -29,16 +29,65 @@ AL Test Runner includes an optional MCP (Model Context Protocol) server that ena
 
 ### Quick Start
 
-1. **Enable the MCP server** in your VS Code/Cursor settings:
-   ```json
-   "al-test-runner.enableMCP": true
-   ```
+#### Step 1: Enable the MCP Server in VS Code/Cursor
 
-2. **Restart your IDE** after changing this setting.
+Add this to your VS Code/Cursor settings (`settings.json`):
 
-3. **Switch to Agent Mode** in Cursor (or use GitHub Copilot Chat in VS Code).
+```json
+"al-test-runner.enableMCP": true
+```
 
-4. **Start using AI-assisted testing** - just ask naturally!
+#### Step 2: Configure Cursor to Connect to the MCP Server
+
+Add this to your Cursor MCP configuration file (`~/.cursor/mcp.json` or workspace `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "al-test-runner": {
+      "command": "node",
+      "args": ["<path-to-extension>/out/mcp/serverEntry.js"]
+    }
+  }
+}
+```
+
+**Finding the extension path:**
+- Windows: `%USERPROFILE%\.vscode\extensions\jamespearson.al-test-runner-<version>`
+- macOS/Linux: `~/.vscode/extensions/jamespearson.al-test-runner-<version>`
+- For Cursor: Replace `.vscode` with `.cursor`
+
+Example for Windows:
+```json
+{
+  "mcpServers": {
+    "al-test-runner": {
+      "command": "node",
+      "args": ["C:/Users/YourName/.cursor/extensions/jamespearson.al-test-runner-10.17.0/out/mcp/serverEntry.js"]
+    }
+  }
+}
+```
+
+#### Step 3: Restart Your IDE
+
+Restart VS Code/Cursor after changing settings.
+
+#### Step 4: Start Using AI-Assisted Testing
+
+1. **Switch to Agent Mode** in Cursor (or use GitHub Copilot Chat in VS Code)
+2. **Open an `.al` file** in your project - this tells the MCP which project to use
+3. **Ask naturally** - the AI can now run tests, publish extensions, and more!
+
+### How Project Detection Works
+
+The MCP automatically knows which project you're working on:
+
+1. When you open an `.al` file, the extension detects the project root (by finding `app.json`)
+2. This information is shared with the MCP server
+3. When switching between projects, just open a file in the new project
+
+This means you can work across multiple BC projects without manual configuration!
 
 ### Usage Examples
 
@@ -92,30 +141,51 @@ Once enabled, you can use natural language prompts with your AI assistant:
 
 ### Configuration (Optional)
 
-For multi-root workspaces or when automatic detection fails, create `.altestrunner/mcp-settings.json` in each project:
+Most settings are auto-detected from your `launch.json` and `app.json`. However, you can create `.altestrunner/mcp-settings.json` to override specific values:
 
 ```json
 {
   "containerName": "your-bc-container-name",
-  "projectPath": "C:/path/to/your/al/project",
   "outputFolder": ".output",
-  "extensionName": "Your Extension Name",
+  "extensionName": "Your Extension Name-Test",
   "extensionId": "your-extension-guid"
 }
 ```
 
-**Multi-Root Workspace Settings:**
-- `extensionName` - Overrides the name from `app.json` (useful for test extensions with different names)
-- `extensionId` - Overrides the ID from `app.json`
+**When to use `mcp-settings.json`:**
 
-The MCP automatically detects the correct project based on the file path when running tests. Each project should have its own `mcp-settings.json` in its `.altestrunner` folder.
+| Setting | When Needed |
+|---------|-------------|
+| `containerName` | When container name differs from `launch.json` server URL |
+| `extensionName` | When your test extension has a different name than `app.json` (e.g., "MyApp-Test") |
+| `extensionId` | When you need to override the extension ID from `app.json` |
+| `outputFolder` | When your `.app` files are in a non-standard location |
 
-**Troubleshooting Multi-Root Issues:**
-If tests run against the wrong extension, use the `debug_project_context` tool:
-- *"Debug project context for file [path-to-test-file]"*
-- This shows which project is detected and what settings are being used
+**Typical Setup:**
 
-Or use the AI assistant: *"Configure the MCP settings for container 'bcserver'"*
+For most projects, no `mcp-settings.json` is needed. The MCP will:
+1. Read the container name from `launch.json` server URL
+2. Read extension name/ID from `app.json`
+3. Look for `.app` files in `.output/` folder
+
+**Multi-Root Workspaces:**
+
+Each project in a multi-root workspace can have its own `.altestrunner/mcp-settings.json`. The MCP automatically uses the correct settings based on which file you have open.
+
+### Troubleshooting
+
+**Tests running against wrong extension?**
+
+Use the `debug_project_context` tool to see what's happening:
+- Ask: *"Debug project context for this file"*
+- This shows the detected project, loaded settings, and effective extension name
+
+**MCP not responding?**
+
+1. Ensure `"al-test-runner.enableMCP": true` is set
+2. Restart your IDE
+3. Open an `.al` file in your project before running MCP commands
+4. Check the Output panel for "AL Test Runner" errors
 
 ## Requirements
 - A Business Central Docker container that you can publish your extension into and run your tests against. As of v0.2.0, Docker can either be running locally or on a remote server. If remote, you must be able to execute PowerShell commands against the host with ps-remoting.

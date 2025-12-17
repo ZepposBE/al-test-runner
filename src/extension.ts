@@ -10,7 +10,7 @@ import { getOutputWriter, OutputWriter } from './output';
 import { createTestController, discoverTests, discoverTestsInDocument } from './testController';
 import { onChangeAppFile, publishApp } from './publish';
 import { awaitFileExistence } from './file';
-import { join } from 'path';
+import { join, dirname, normalize } from 'path';
 import TelemetryReporter from '@vscode/extension-telemetry';
 import { createTelemetryReporter, sendDebugEvent } from './telemetry';
 import { TestCoverageCodeLensProvider } from './testCoverageCodeLensProvider';
@@ -25,6 +25,64 @@ import * as mcp from './mcp';
 let terminal: vscode.Terminal;
 export let activeEditor = vscode.window.activeTextEditor;
 export let alFiles: types.ALFile[] = [];
+
+/**
+ * Find the project root directory by looking for app.json starting from a given path
+ * Walks up the directory tree until it finds app.json or reaches the root
+ */
+function findProjectRootFromPath(startPath: string): string | null {
+	if (!startPath) {
+		return null;
+	}
+
+	let currentDir = normalize(startPath);
+	
+	// If it's a file, start from its directory
+	if (existsSync(currentDir)) {
+		try {
+			const stat = require('fs').statSync(currentDir);
+			if (!stat.isDirectory()) {
+				currentDir = dirname(currentDir);
+			}
+		} catch {
+			currentDir = dirname(currentDir);
+		}
+	} else {
+		currentDir = dirname(currentDir);
+	}
+
+	// Walk up the directory tree looking for app.json
+	while (currentDir && currentDir.length > 3) { // Stop at root (e.g., "C:\")
+		const appJsonPath = join(currentDir, 'app.json');
+		if (existsSync(appJsonPath)) {
+			return currentDir;
+		}
+		
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) {
+			break;
+		}
+		currentDir = parentDir;
+	}
+
+	return null;
+}
+
+/**
+ * Update the active project state for MCP synchronization
+ * Called when the user switches to a different file
+ */
+function updateActiveProjectForMCP(filePath: string): void {
+	// Only process .al files
+	if (!filePath.toLowerCase().endsWith('.al')) {
+		return;
+	}
+
+	const projectRoot = findProjectRootFromPath(filePath);
+	if (projectRoot) {
+		mcp.writeActiveProjectState(projectRoot);
+	}
+}
 const config = vscode.workspace.getConfiguration('al-test-runner');
 const passingTestColor = 'rgba(' + config.passingTestsColor.red + ',' + config.passingTestsColor.green + ',' + config.passingTestsColor.blue + ',' + config.passingTestsColor.alpha + ')';
 const failingTestColor = 'rgba(' + config.failingTestsColor.red + ',' + config.failingTestsColor.green + ',' + config.failingTestsColor.blue + ',' + config.failingTestsColor.alpha + ')';
@@ -159,6 +217,9 @@ export function activate(context: vscode.ExtensionContext) {
 				triggerUpdateDecorations();
 			}
 			updateCodeCoverageDecoration();
+			
+			// Update MCP active project state when switching files
+			updateActiveProjectForMCP(editor.document.uri.fsPath);
 		}
 	}, null, context.subscriptions);
 
@@ -193,7 +254,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// Start MCP server if enabled
 	const mcpConfig = vscode.workspace.getConfiguration('al-test-runner');
 	if (mcpConfig.get('enableMCP')) {
-		mcp.startMCPServer(context.extensionPath);
+		mcp.startMCPServer(context.extensionPath, context);
 	}
 
 	// Watch for MCP setting changes
@@ -202,7 +263,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (e.affectsConfiguration('al-test-runner.enableMCP')) {
 				const enabled = vscode.workspace.getConfiguration('al-test-runner').get('enableMCP');
 				if (enabled) {
-					mcp.startMCPServer(context.extensionPath);
+					mcp.startMCPServer(context.extensionPath, context);
 				} else {
 					mcp.stopMCPServer();
 				}
@@ -623,6 +684,9 @@ function getLastResultPath(): string {
 
 // this method is called when your extension is deactivated
 export function deactivate() {
+	// Clear active project state before stopping MCP server
+	mcp.clearActiveProjectState();
+	
 	// Stop MCP server if running
 	mcp.stopMCPServer();
 	

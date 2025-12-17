@@ -38,7 +38,11 @@ import {
     setProjectContextFromFile,
     clearProjectContext,
     getCurrentProjectContext,
+    getActiveProjectStatePath,
+    readActiveProjectState,
+    clearActiveProjectStateCache,
 } from '../../utils/config';
+import { writeFileSync, mkdirSync, unlinkSync } from 'fs';
 
 suite('MCP Config Utils Tests', () => {
     let testDir: string;
@@ -60,14 +64,15 @@ suite('MCP Config Utils Tests', () => {
     });
 
     suite('getMCPSettingsPath', () => {
-        test('returns path based on AL_PROJECT_PATH environment variable', () => {
+        test('returns path based on project context', () => {
+            createMockALProject(testDir, { appJson: fixtures.appJson });
             setTestEnv(testDir);
             const result = getMCPSettingsPath();
             assert.strictEqual(result, join(testDir, '.altestrunner', 'mcp-settings.json'));
         });
 
-        test('returns path based on cwd when no env var set', () => {
-            // Without AL_PROJECT_PATH set, it uses cwd
+        test('returns path based on cwd when no context set', () => {
+            // Without project context set, it uses cwd
             const result = getMCPSettingsPath();
             assert.ok(result.endsWith(join('.altestrunner', 'mcp-settings.json')));
         });
@@ -129,9 +134,9 @@ suite('MCP Config Utils Tests', () => {
             assert.strictEqual(result, testDir);
         });
 
-        test('returns AL_PROJECT_PATH when no MCP settings', () => {
+        test('returns project context when no MCP settings', () => {
+            createMockALProject(testDir, { appJson: fixtures.appJson }); // Need app.json for context to work
             setTestEnv(testDir);
-            createMockALProject(testDir, {}); // No MCP settings
             
             const result = getProjectPath();
             assert.strictEqual(result, testDir);
@@ -738,5 +743,179 @@ suite('MCP Config Utils Tests', () => {
             }
         });
     });
+
+    suite('Active Project State Synchronization', () => {
+        let stateFilePath: string;
+        let originalEnv: string | undefined;
+
+        setup(() => {
+            // Save original env and set up state file path
+            originalEnv = process.env.AL_ACTIVE_PROJECT_STATE_PATH;
+            stateFilePath = join(testDir, '.altestrunner', 'active-project.json');
+            mkdirSync(join(testDir, '.altestrunner'), { recursive: true });
+            process.env.AL_ACTIVE_PROJECT_STATE_PATH = stateFilePath;
+            clearActiveProjectStateCache();
+        });
+
+        teardown(() => {
+            // Restore original env
+            if (originalEnv === undefined) {
+                delete process.env.AL_ACTIVE_PROJECT_STATE_PATH;
+            } else {
+                process.env.AL_ACTIVE_PROJECT_STATE_PATH = originalEnv;
+            }
+            clearActiveProjectStateCache();
+        });
+
+        test('getActiveProjectStatePath returns env var value', () => {
+            const result = getActiveProjectStatePath();
+            assert.strictEqual(result, stateFilePath);
+        });
+
+        test('getActiveProjectStatePath returns null when env var not set', () => {
+            delete process.env.AL_ACTIVE_PROJECT_STATE_PATH;
+            const result = getActiveProjectStatePath();
+            assert.strictEqual(result, null);
+        });
+
+        test('readActiveProjectState returns null when file does not exist', () => {
+            const result = readActiveProjectState();
+            assert.strictEqual(result, null);
+        });
+
+        test('readActiveProjectState reads valid state file', () => {
+            const projectDir = createTestDir();
+            createMockALProject(projectDir, { appJson: fixtures.appJson });
+            
+            try {
+                const state = {
+                    projectPath: projectDir,
+                    timestamp: new Date().toISOString()
+                };
+                writeFileSync(stateFilePath, JSON.stringify(state), 'utf-8');
+                
+                const result = readActiveProjectState();
+                
+                assert.ok(result);
+                assert.strictEqual(result?.projectPath, projectDir);
+                assert.ok(result?.timestamp);
+            } finally {
+                cleanupTestDir(projectDir);
+            }
+        });
+
+        test('readActiveProjectState returns null for stale state (>5 minutes)', () => {
+            const projectDir = createTestDir();
+            createMockALProject(projectDir, { appJson: fixtures.appJson });
+            
+            try {
+                // Create state with old timestamp (6 minutes ago)
+                const oldTimestamp = new Date(Date.now() - 6 * 60 * 1000);
+                const state = {
+                    projectPath: projectDir,
+                    timestamp: oldTimestamp.toISOString()
+                };
+                writeFileSync(stateFilePath, JSON.stringify(state), 'utf-8');
+                
+                const result = readActiveProjectState();
+                
+                // Should return null because state is too old
+                assert.strictEqual(result, null);
+            } finally {
+                cleanupTestDir(projectDir);
+            }
+        });
+
+        test('readActiveProjectState returns null when project path does not exist', () => {
+            const state = {
+                projectPath: '/nonexistent/project/path',
+                timestamp: new Date().toISOString()
+            };
+            writeFileSync(stateFilePath, JSON.stringify(state), 'utf-8');
+            
+            const result = readActiveProjectState();
+            
+            assert.strictEqual(result, null);
+        });
+
+        test('getProjectPath uses active state when available', () => {
+            const projectDir = createTestDir();
+            createMockALProject(projectDir, { appJson: fixtures.appJson });
+            
+            try {
+                // Clear any existing context
+                clearProjectContext();
+                clearMCPSettingsCache();
+                
+                // Write active state
+                const state = {
+                    projectPath: projectDir,
+                    timestamp: new Date().toISOString()
+                };
+                writeFileSync(stateFilePath, JSON.stringify(state), 'utf-8');
+                clearActiveProjectStateCache();
+                
+                // getProjectPath should now return the active state project
+                const result = getProjectPath();
+                
+                assert.ok(
+                    pathsEqual(result, projectDir),
+                    `Expected ${result} to equal ${projectDir}`
+                );
+            } finally {
+                cleanupTestDir(projectDir);
+            }
+        });
+
+        test('active state takes priority over MCP settings projectPath', () => {
+            const stateProjectDir = createTestDir();
+            const settingsProjectDir = createTestDir();
+            
+            createMockALProject(stateProjectDir, { 
+                appJson: { ...fixtures.appJson, name: 'State Project' }
+            });
+            createMockALProject(settingsProjectDir, { 
+                appJson: { ...fixtures.appJson, name: 'Settings Project' },
+                mcpSettings: { projectPath: settingsProjectDir }
+            });
+            
+            try {
+                // Set context to settings project (which has projectPath in mcp-settings)
+                setProjectContextFromFile(join(settingsProjectDir, 'src', 'Test.al'));
+                
+                // Clear context but keep MCP settings loaded
+                clearProjectContext();
+                
+                // Write active state to state project
+                const state = {
+                    projectPath: stateProjectDir,
+                    timestamp: new Date().toISOString()
+                };
+                writeFileSync(stateFilePath, JSON.stringify(state), 'utf-8');
+                clearActiveProjectStateCache();
+                
+                // getProjectPath should return state project (priority over MCP settings)
+                const result = getProjectPath();
+                
+                assert.ok(
+                    pathsEqual(result, stateProjectDir),
+                    `Expected ${result} to equal ${stateProjectDir} (not ${settingsProjectDir})`
+                );
+            } finally {
+                cleanupTestDir(stateProjectDir);
+                cleanupTestDir(settingsProjectDir);
+            }
+        });
+    });
 });
+
+/**
+ * Helper function for case-insensitive path comparison on Windows
+ */
+function pathsEqual(path1: string, path2: string): boolean {
+    if (process.platform === 'win32') {
+        return path1.toLowerCase() === path2.toLowerCase();
+    }
+    return path1 === path2;
+}
 
