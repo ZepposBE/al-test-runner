@@ -18,7 +18,8 @@ import {
   getContainerName,
   getOutputFolder,
   getConfiguredAppFilePath,
-  getMCPSettings
+  getMCPSettings,
+  getCurrentProjectContext
 } from './config';
 
 /**
@@ -81,6 +82,7 @@ export function buildTestCommand(params: RunTestsParams): string {
   const config = getALTestRunnerConfig();
   const launchConfig = getSelectedLaunchConfig();
   const appJson = getAppJson();
+  const mcpSettings = getMCPSettings();
   const resultsPath = join(getProjectPath(), '.altestrunner');
 
   if (!modulePath) {
@@ -98,10 +100,17 @@ export function buildTestCommand(params: RunTestsParams): string {
   cmdParams.push(`-Tests ${params.scope}`);
   cmdParams.push(`-ResultsPath "${resultsPath}"`);
 
-  // Add extension info
-  if (appJson) {
-    cmdParams.push(`-ExtensionId "${appJson.id}"`);
-    cmdParams.push(`-ExtensionName "${appJson.name}"`);
+  // Add extension info with priority:
+  // 1. MCP Settings (extensionId/extensionName)
+  // 2. app.json
+  const extensionId = mcpSettings?.extensionId || appJson?.id;
+  const extensionName = mcpSettings?.extensionName || appJson?.name;
+  
+  if (extensionId) {
+    cmdParams.push(`-ExtensionId "${extensionId}"`);
+  }
+  if (extensionName) {
+    cmdParams.push(`-ExtensionName "${extensionName}"`);
   }
 
   // Add launch config

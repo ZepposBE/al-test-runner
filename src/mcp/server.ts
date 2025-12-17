@@ -37,8 +37,10 @@ import {
 import {
   createMCPSettingsTool,
   getMCPSettingsTool,
+  debugProjectContextTool,
   createMCPSettingsHandler,
-  getMCPSettingsHandler
+  getMCPSettingsHandler,
+  debugProjectContextHandler
 } from './tools/settings';
 import {
   updateDecorationsTool,
@@ -87,6 +89,7 @@ export function createMCPServer(): Server {
         publishAndTestTool,
         createMCPSettingsTool,
         getMCPSettingsTool,
+        debugProjectContextTool,
         updateDecorationsTool,
       ],
     };
@@ -142,11 +145,16 @@ export function createMCPServer(): Server {
           launchConfigName?: string;
           appFilePath?: string;
           outputFolder?: string;
+          extensionId?: string;
+          extensionName?: string;
           overwrite?: boolean;
         });
 
       case 'get_mcp_settings':
         return getMCPSettingsHandler();
+
+      case 'debug_project_context':
+        return debugProjectContextHandler(args as { testFilePath?: string });
 
       case 'update_test_decorations':
         return updateDecorationsHandler();

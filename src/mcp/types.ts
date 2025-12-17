@@ -129,5 +129,9 @@ export interface MCPSettings {
   containerName?: string;
   /** Folder to look for .app files (default: .output) */
   outputFolder?: string;
+  /** Extension ID (GUID) - overrides app.json id */
+  extensionId?: string;
+  /** Extension name - overrides app.json name (useful for test extensions) */
+  extensionName?: string;
 }
 

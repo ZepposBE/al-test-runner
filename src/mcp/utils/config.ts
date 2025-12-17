@@ -3,76 +3,227 @@
  */
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, normalize, sep } from 'path';
 import type { ALTestRunnerConfig, MCPSettings } from '../types';
 
 // Cache for MCP settings to avoid repeated file reads
-let cachedMCPSettings: MCPSettings | null | undefined = undefined;
+// Key is the NORMALIZED project path, value is the settings (or null if not found)
+let cachedMCPSettings: Map<string, MCPSettings | null> = new Map();
+
+// Current active project path context (derived from last operation)
+// We store both normalized (for cache lookups) and original (for file operations)
+let currentProjectContextNormalized: string | null = null;
+let currentProjectContextOriginal: string | null = null;
+
+/**
+ * Normalize a path for consistent comparison and caching
+ */
+function normalizePath(path: string): string {
+  // Normalize path separators and resolve .. and .
+  let normalized = normalize(path);
+  // On Windows, convert to consistent case for comparison
+  if (process.platform === 'win32') {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
+/**
+ * Find the project root directory by looking for app.json starting from a given path
+ * Walks up the directory tree until it finds app.json or reaches the root
+ * 
+ * @param startPath - A file or directory path to start searching from
+ * @returns The project root directory containing app.json, or null if not found
+ */
+export function findProjectRootFromPath(startPath: string): string | null {
+  if (!startPath) {
+    return null;
+  }
+
+  // Normalize the path
+  let currentDir = normalize(startPath);
+  
+  // If it's a file, start from its directory
+  if (existsSync(currentDir)) {
+    try {
+      const stat = require('fs').statSync(currentDir);
+      if (!stat.isDirectory()) {
+        currentDir = dirname(currentDir);
+      }
+    } catch {
+      currentDir = dirname(currentDir);
+    }
+  } else {
+    // Path doesn't exist, assume it's a file and start from parent
+    currentDir = dirname(currentDir);
+  }
+
+  // Walk up the directory tree looking for app.json
+  const root = process.platform === 'win32' ? currentDir.split(sep)[0] + sep : '/';
+  
+  while (currentDir && currentDir !== root) {
+    const appJsonPath = join(currentDir, 'app.json');
+    if (existsSync(appJsonPath)) {
+      return currentDir;
+    }
+    
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) {
+      // Reached root
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  return null;
+}
+
+/**
+ * Set the current project context based on a file path
+ * This affects which project's settings are used for subsequent operations
+ * 
+ * @param filePath - A file path within the project
+ * @returns The detected project root, or null if not found
+ */
+export function setProjectContextFromFile(filePath: string): string | null {
+  const projectRoot = findProjectRootFromPath(filePath);
+  if (projectRoot) {
+    currentProjectContextNormalized = normalizePath(projectRoot);
+    currentProjectContextOriginal = projectRoot;  // Keep original case for file operations
+    return projectRoot;
+  }
+  return null;
+}
+
+/**
+ * Clear the project context (useful for testing)
+ */
+export function clearProjectContext(): void {
+  currentProjectContextNormalized = null;
+  currentProjectContextOriginal = null;
+}
+
+/**
+ * Get the currently active project context
+ * Returns the ORIGINAL (non-normalized) path for file operations
+ */
+export function getCurrentProjectContext(): string | null {
+  return currentProjectContextOriginal;
+}
+
+/**
+ * Get the normalized project context (for cache lookups)
+ */
+function getNormalizedProjectContext(): string | null {
+  return currentProjectContextNormalized;
+}
 
 /**
  * Get the path to the MCP settings file
+ * @param projectPath - Optional project path override (if not provided, uses current context or defaults)
  */
-export function getMCPSettingsPath(): string {
-  // Use environment variable or cwd to find .altestrunner folder
-  const basePath = process.env.AL_PROJECT_PATH || process.cwd();
+export function getMCPSettingsPath(projectPath?: string): string {
+  // Use original paths for file operations
+  const basePath = projectPath 
+    || currentProjectContextOriginal 
+    || process.env.AL_PROJECT_PATH 
+    || process.cwd();
   return join(basePath, '.altestrunner', 'mcp-settings.json');
 }
 
 /**
  * Load MCP settings from .altestrunner/mcp-settings.json
  * Returns null if file doesn't exist or can't be parsed
+ * 
+ * @param projectPath - Optional project path override (if not provided, uses current context or defaults)
  */
-export function getMCPSettings(): MCPSettings | null {
-  // Return cached value if available
-  if (cachedMCPSettings !== undefined) {
-    return cachedMCPSettings;
+export function getMCPSettings(projectPath?: string): MCPSettings | null {
+  // For cache key, use normalized path
+  // For file operations, use original path
+  const originalPath = projectPath 
+    || currentProjectContextOriginal 
+    || process.env.AL_PROJECT_PATH 
+    || process.cwd();
+  
+  const normalizedCacheKey = normalizePath(originalPath);
+  
+  // Check cache first using normalized key
+  if (cachedMCPSettings.has(normalizedCacheKey)) {
+    return cachedMCPSettings.get(normalizedCacheKey) || null;
   }
 
-  const settingsPath = getMCPSettingsPath();
+  // Use original path for file operations
+  const settingsPath = getMCPSettingsPath(originalPath);
   
   if (!existsSync(settingsPath)) {
-    cachedMCPSettings = null;
+    cachedMCPSettings.set(normalizedCacheKey, null);
     return null;
   }
 
   try {
     const data = readFileSync(settingsPath, 'utf-8');
-    cachedMCPSettings = JSON.parse(data) as MCPSettings;
-    return cachedMCPSettings;
+    const settings = JSON.parse(data) as MCPSettings;
+    cachedMCPSettings.set(normalizedCacheKey, settings);
+    return settings;
   } catch (error) {
     console.error('Error reading MCP settings:', error);
-    cachedMCPSettings = null;
+    cachedMCPSettings.set(normalizedCacheKey, null);
     return null;
   }
 }
 
 /**
  * Clear the MCP settings cache (useful for testing or when settings change)
+ * @param projectPath - Optional: clear cache only for specific project. If not provided, clears all.
  */
-export function clearMCPSettingsCache(): void {
-  cachedMCPSettings = undefined;
+export function clearMCPSettingsCache(projectPath?: string): void {
+  if (projectPath) {
+    cachedMCPSettings.delete(normalizePath(projectPath));
+  } else {
+    cachedMCPSettings.clear();
+  }
 }
 
 /**
  * Get the AL project path with priority resolution:
- * 1. MCP Settings (projectPath)
- * 2. Environment variable (AL_PROJECT_PATH)
- * 3. Current working directory
+ * 1. Current project context (derived from filename)
+ * 2. MCP Settings (projectPath)
+ * 3. Environment variable (AL_PROJECT_PATH)
+ * 4. Current working directory
+ * 
+ * Returns the ORIGINAL path (preserves case) for file system operations.
+ * 
+ * @param contextPath - Optional file path to derive project context from
  */
-export function getProjectPath(): string {
-  const mcpSettings = getMCPSettings();
+export function getProjectPath(contextPath?: string): string {
+  // If a context path is provided, try to derive project root from it
+  if (contextPath) {
+    const derived = findProjectRootFromPath(contextPath);
+    if (derived) {
+      // Also update the current context for subsequent calls
+      currentProjectContextNormalized = normalizePath(derived);
+      currentProjectContextOriginal = derived;
+      return derived;
+    }
+  }
   
-  // Priority 1: MCP Settings
+  // Priority 1: Current project context (use original path for file operations)
+  if (currentProjectContextOriginal && existsSync(currentProjectContextOriginal)) {
+    return currentProjectContextOriginal;
+  }
+  
+  // Priority 2: MCP Settings (from current context or default)
+  const mcpSettings = getMCPSettings();
   if (mcpSettings?.projectPath && existsSync(mcpSettings.projectPath)) {
     return mcpSettings.projectPath;
   }
   
-  // Priority 2: Environment variable
+  // Priority 3: Environment variable
   if (process.env.AL_PROJECT_PATH) {
     return process.env.AL_PROJECT_PATH;
   }
   
-  // Priority 3: Current working directory
+  // Priority 4: Current working directory
   return process.cwd();
 }
 

@@ -4,7 +4,7 @@
 
 import { runTests, findTestCodeunits, findTestLineNumber, publishApp } from '../utils/powershell';
 import { getTestResultsSummary } from '../utils/xmlParser';
-import { getAppJson, triggerDecorations } from '../utils/config';
+import { getAppJson, triggerDecorations, setProjectContextFromFile, getProjectPath, getMCPSettings, getCurrentProjectContext } from '../utils/config';
 import { type ProgressReporter, consoleProgressReporter } from '../utils/progress';
 
 /**
@@ -272,6 +272,22 @@ export async function runTestCodeunitHandler(
   }
 
   try {
+    // Set project context from filename if provided
+    // This ensures we use the correct project's settings in multi-root workspaces
+    if (args.filename) {
+      const projectRoot = setProjectContextFromFile(args.filename);
+      console.error(`[DEBUG] runTestCodeunitHandler: Filename received: ${args.filename}`);
+      console.error(`[DEBUG] runTestCodeunitHandler: Project root detected: ${projectRoot}`);
+      console.error(`[DEBUG] runTestCodeunitHandler: Current context after set: ${getCurrentProjectContext()}`);
+      
+      // Log the settings that will be used
+      const mcpSettings = getMCPSettings();
+      const appJson = getAppJson();
+      console.error(`[DEBUG] runTestCodeunitHandler: MCP settings: ${JSON.stringify(mcpSettings)}`);
+      console.error(`[DEBUG] runTestCodeunitHandler: app.json name: ${appJson?.name}, id: ${appJson?.id}`);
+      console.error(`[DEBUG] runTestCodeunitHandler: Effective extension: ${mcpSettings?.extensionName || appJson?.name}`);
+    }
+
     const hasPublish = args?.publishFirst;
     const totalSteps = hasPublish ? 4 : 3;
     let currentStep = 1;
@@ -307,7 +323,7 @@ export async function runTestCodeunitHandler(
           content: [
             {
               type: 'text' as const,
-              text: `❌ Test codeunit with ID ${args.codeunitId} not found`,
+              text: `❌ Test codeunit with ID ${args.codeunitId} not found\n\nSearched in: ${getProjectPath()}\n\nNote: When using codeunitId, ensure the project context is correct. Consider using 'filename' parameter instead for multi-root workspaces.`,
             },
           ],
           isError: true,
@@ -353,7 +369,15 @@ export async function runTestCodeunitHandler(
         : `${summary.failed} of ${summary.totalTests} tests failed`;
       progress.report(totalSteps, totalSteps, resultMessage);
       
+      // Get extension info for visibility
+      const mcpSettingsFinal = getMCPSettings();
+      const appJsonFinal = getAppJson();
+      const effectiveExtensionName = mcpSettingsFinal?.extensionName || appJsonFinal?.name || 'Unknown';
+      const projectPathFinal = getProjectPath();
+      
       let resultText = `${status}\n\n`;
+      resultText += `Extension: ${effectiveExtensionName}\n`;
+      resultText += `Project: ${projectPathFinal}\n`;
       resultText += `Summary: ${summary.passed}/${summary.totalTests} passed in ${summary.totalTime.toFixed(2)}s\n`;
       
       if (summary.failedTests.length > 0) {
@@ -420,6 +444,20 @@ export async function runSingleTestHandler(
   }
 
   try {
+    // Set project context from filename
+    // This ensures we use the correct project's settings in multi-root workspaces
+    const projectRoot = setProjectContextFromFile(args.filename);
+    console.error(`[DEBUG] runSingleTestHandler: Filename received: ${args.filename}`);
+    console.error(`[DEBUG] runSingleTestHandler: Project root detected: ${projectRoot}`);
+    console.error(`[DEBUG] runSingleTestHandler: Current context after set: ${getCurrentProjectContext()}`);
+    
+    // Log the settings that will be used
+    const mcpSettings = getMCPSettings();
+    const appJson = getAppJson();
+    console.error(`[DEBUG] runSingleTestHandler: MCP settings: ${JSON.stringify(mcpSettings)}`);
+    console.error(`[DEBUG] runSingleTestHandler: app.json name: ${appJson?.name}, id: ${appJson?.id}`);
+    console.error(`[DEBUG] runSingleTestHandler: Effective extension: ${mcpSettings?.extensionName || appJson?.name}`);
+
     const hasPublish = args?.publishFirst;
     const totalSteps = hasPublish ? 4 : 3;
     let currentStep = 1;
@@ -476,13 +514,19 @@ export async function runSingleTestHandler(
     if (summary) {
       const testResult = summary.failedTests.find(t => t.test === args.testName);
       
+      // Get extension info for visibility
+      const mcpSettingsFinal = getMCPSettings();
+      const appJsonFinal = getAppJson();
+      const effectiveExtensionName = mcpSettingsFinal?.extensionName || appJsonFinal?.name || 'Unknown';
+      const projectPathFinal = getProjectPath();
+      
       if (testResult) {
         progress.report(totalSteps, totalSteps, `Test failed: ${args.testName}`);
         return {
           content: [
             {
               type: 'text' as const,
-              text: `❌ TEST FAILED: ${args.testName}\n\nError: ${testResult.message}\n\nStack Trace:\n${testResult.stackTrace}`,
+              text: `❌ TEST FAILED: ${args.testName}\n\nExtension: ${effectiveExtensionName}\nProject: ${projectPathFinal}\n\nError: ${testResult.message}\n\nStack Trace:\n${testResult.stackTrace}`,
             },
           ],
         };
@@ -492,7 +536,7 @@ export async function runSingleTestHandler(
           content: [
             {
               type: 'text' as const,
-              text: `✅ TEST PASSED: ${args.testName} (${summary.totalTime.toFixed(2)}s)`,
+              text: `✅ TEST PASSED: ${args.testName} (${summary.totalTime.toFixed(2)}s)\n\nExtension: ${effectiveExtensionName}\nProject: ${projectPathFinal}`,
             },
           ],
         };

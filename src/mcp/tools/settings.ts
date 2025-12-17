@@ -13,7 +13,10 @@ import {
   getContainerName,
   getSelectedLaunchConfigWithPriority,
   getAppJson,
-  getOutputFolder
+  getOutputFolder,
+  getCurrentProjectContext,
+  setProjectContextFromFile,
+  getALTestRunnerPath
 } from '../utils/config';
 import { findAppFile } from '../utils/powershell';
 import { existsSync } from 'fs';
@@ -35,11 +38,14 @@ The settings file allows you to explicitly configure:
 - launchConfigName: Which launch configuration to use
 - appFilePath: Explicit path to .app file
 - outputFolder: Where to look for .app files
+- extensionId: Extension ID (GUID) - overrides app.json
+- extensionName: Extension name - overrides app.json (useful for test extensions)
 
 Use this when:
 - Publishing fails because launch.json wasn't found
 - You're in a multi-root workspace
-- You want to override auto-detected values`,
+- You want to override auto-detected values
+- You need to specify a different extension name (e.g., for test extensions)`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -62,6 +68,14 @@ Use this when:
       outputFolder: {
         type: 'string',
         description: 'Folder containing .app files (default: .output).',
+      },
+      extensionId: {
+        type: 'string',
+        description: 'Extension ID (GUID). Overrides the id from app.json.',
+      },
+      extensionName: {
+        type: 'string',
+        description: 'Extension name. Overrides the name from app.json (useful for test extensions).',
       },
       overwrite: {
         type: 'boolean',
@@ -91,6 +105,31 @@ Use this to diagnose configuration issues or see what values are being used.`,
 };
 
 /**
+ * Tool definition for debug_project_context
+ */
+export const debugProjectContextTool: Tool = {
+  name: 'debug_project_context',
+  description: `Debug tool for troubleshooting multi-root workspace issues.
+
+This tool provides detailed diagnostic information about:
+- Current project context (internal state)
+- MCP settings being used
+- Path resolution for a given file
+- Extension info that would be used for tests
+
+Use this when tests are running against the wrong extension or project.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      testFilePath: {
+        type: 'string',
+        description: 'Optional: A file path to test project detection with. If provided, will show what project would be detected from this path.',
+      },
+    },
+  },
+};
+
+/**
  * Handler for create_mcp_settings tool
  */
 export async function createMCPSettingsHandler(args?: {
@@ -99,6 +138,8 @@ export async function createMCPSettingsHandler(args?: {
   launchConfigName?: string;
   appFilePath?: string;
   outputFolder?: string;
+  extensionId?: string;
+  extensionName?: string;
   overwrite?: boolean;
 }) {
   try {
@@ -125,6 +166,12 @@ export async function createMCPSettingsHandler(args?: {
     }
     if (args?.outputFolder !== undefined) {
       newSettings.outputFolder = args.outputFolder;
+    }
+    if (args?.extensionId !== undefined) {
+      newSettings.extensionId = args.extensionId;
+    }
+    if (args?.extensionName !== undefined) {
+      newSettings.extensionName = args.extensionName;
     }
 
     // Auto-detect values for any missing required settings
@@ -219,6 +266,8 @@ export async function getMCPSettingsHandler() {
         launchConfigName: launchConfig?.name || null,
         appFilePath: appFile,
         outputFolder,
+        extensionId: appJson?.id || null,
+        extensionName: appJson?.name || null,
       },
       effective: {
         projectPath: currentSettings?.projectPath || projectPath,
@@ -226,6 +275,8 @@ export async function getMCPSettingsHandler() {
         launchConfigName: currentSettings?.launchConfigName || launchConfig?.name || null,
         appFilePath: currentSettings?.appFilePath || appFile,
         outputFolder: currentSettings?.outputFolder || outputFolder,
+        extensionId: currentSettings?.extensionId || appJson?.id || null,
+        extensionName: currentSettings?.extensionName || appJson?.name || null,
       },
       projectInfo: appJson ? {
         name: appJson.name,
@@ -307,6 +358,129 @@ export async function getMCPSettingsHandler() {
           text: JSON.stringify({
             success: false,
             error: error instanceof Error ? error.message : String(error),
+          }, null, 2),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Handler for debug_project_context tool
+ */
+export async function debugProjectContextHandler(args?: { testFilePath?: string }) {
+  try {
+    // Capture state BEFORE any test path operations
+    const currentContextBefore = getCurrentProjectContext();
+    const projectPathBefore = getProjectPath();
+    const mcpSettingsPathBefore = getMCPSettingsPath();
+    const mcpSettingsBefore = getMCPSettings();
+    const appJsonBefore = getAppJson();
+    
+    // If a test file path is provided, simulate what would happen
+    let testPathAnalysis = null;
+    if (args?.testFilePath) {
+      // Set context from the test file
+      const detectedProject = setProjectContextFromFile(args.testFilePath);
+      
+      // Capture state AFTER setting context
+      const currentContextAfter = getCurrentProjectContext();
+      const projectPathAfter = getProjectPath();
+      const mcpSettingsPathAfter = getMCPSettingsPath();
+      const mcpSettingsAfter = getMCPSettings();
+      const appJsonAfter = getAppJson();
+      const altestrunnerPath = getALTestRunnerPath();
+      
+      testPathAnalysis = {
+        inputPath: args.testFilePath,
+        detectedProjectRoot: detectedProject,
+        contextChanged: currentContextBefore !== currentContextAfter,
+        stateAfterDetection: {
+          currentProjectContext: currentContextAfter,
+          projectPath: projectPathAfter,
+          mcpSettingsPath: mcpSettingsPathAfter,
+          mcpSettingsExists: existsSync(mcpSettingsPathAfter),
+          mcpSettingsContent: mcpSettingsAfter,
+          altestrunnerPath,
+          altestrunnerExists: existsSync(altestrunnerPath),
+          appJson: appJsonAfter ? {
+            name: appJsonAfter.name,
+            id: appJsonAfter.id,
+            publisher: appJsonAfter.publisher,
+          } : null,
+        },
+        effectiveExtensionInfo: {
+          extensionId: mcpSettingsAfter?.extensionId || appJsonAfter?.id || null,
+          extensionName: mcpSettingsAfter?.extensionName || appJsonAfter?.name || null,
+          source: mcpSettingsAfter?.extensionName ? 'mcp-settings.json' : (appJsonAfter?.name ? 'app.json' : 'not found'),
+        },
+      };
+    }
+    
+    // Build diagnostic output
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      nodeVersion: process.version,
+      platform: process.platform,
+      cwd: process.cwd(),
+      environmentVariables: {
+        AL_PROJECT_PATH: process.env.AL_PROJECT_PATH || null,
+        AL_CONTAINER_NAME: process.env.AL_CONTAINER_NAME || null,
+        AL_TEST_RUNNER_PATH: process.env.AL_TEST_RUNNER_PATH || null,
+      },
+      stateBefore: {
+        currentProjectContext: currentContextBefore,
+        projectPath: projectPathBefore,
+        mcpSettingsPath: mcpSettingsPathBefore,
+        mcpSettingsExists: existsSync(mcpSettingsPathBefore),
+        mcpSettingsContent: mcpSettingsBefore,
+        appJson: appJsonBefore ? {
+          name: appJsonBefore.name,
+          id: appJsonBefore.id,
+          publisher: appJsonBefore.publisher,
+        } : null,
+      },
+      testPathAnalysis,
+      recommendations: [] as string[],
+    };
+
+    // Add recommendations based on diagnostics
+    if (testPathAnalysis && !testPathAnalysis.detectedProjectRoot) {
+      diagnostics.recommendations.push(
+        `Could not find app.json by walking up from ${args?.testFilePath}. Ensure the file path is correct and app.json exists in a parent directory.`
+      );
+    }
+    
+    if (testPathAnalysis?.stateAfterDetection.mcpSettingsExists === false) {
+      diagnostics.recommendations.push(
+        `No mcp-settings.json found at ${testPathAnalysis.stateAfterDetection.mcpSettingsPath}. Create this file with extensionName and extensionId for multi-root workspace support.`
+      );
+    }
+    
+    if (testPathAnalysis?.effectiveExtensionInfo.source === 'not found') {
+      diagnostics.recommendations.push(
+        `No extension info found. Ensure app.json exists or create mcp-settings.json with extensionId and extensionName.`
+      );
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(diagnostics, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: 'Debug tool failed',
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
           }, null, 2),
         },
       ],

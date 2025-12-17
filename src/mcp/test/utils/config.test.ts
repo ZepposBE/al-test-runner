@@ -34,6 +34,10 @@ import {
     getLaunchConfigName,
     saveMCPSettings,
     triggerDecorations,
+    findProjectRootFromPath,
+    setProjectContextFromFile,
+    clearProjectContext,
+    getCurrentProjectContext,
 } from '../../utils/config';
 
 suite('MCP Config Utils Tests', () => {
@@ -43,12 +47,14 @@ suite('MCP Config Utils Tests', () => {
         // Create a fresh test directory before each test
         testDir = createTestDir();
         clearMCPSettingsCache();
+        clearProjectContext();
         clearTestEnv();
     });
 
     teardown(() => {
         // Clean up after each test
         clearMCPSettingsCache();
+        clearProjectContext();
         clearTestEnv();
         cleanupTestDir(testDir);
     });
@@ -438,6 +444,298 @@ suite('MCP Config Utils Tests', () => {
             
             const triggerPath = join(testDir, '.altestrunner', 'trigger-decorations');
             assert.strictEqual(existsSync(triggerPath), true);
+        });
+    });
+
+    suite('findProjectRootFromPath', () => {
+        test('finds project root when starting from file path', () => {
+            setTestEnv(testDir);
+            createMockALProject(testDir, { appJson: fixtures.appJson });
+            
+            const filePath = join(testDir, 'src', 'codeunit', 'TestCodeunit.codeunit.al');
+            const result = findProjectRootFromPath(filePath);
+            
+            assert.strictEqual(result, testDir);
+        });
+
+        test('finds project root when starting from subdirectory', () => {
+            setTestEnv(testDir);
+            createMockALProject(testDir, { appJson: fixtures.appJson });
+            
+            const subDir = join(testDir, 'src', 'codeunit');
+            const result = findProjectRootFromPath(subDir);
+            
+            assert.strictEqual(result, testDir);
+        });
+
+        test('returns null when no app.json found', () => {
+            setTestEnv(testDir);
+            // Don't create an AL project - no app.json
+            
+            const filePath = join(testDir, 'somefile.al');
+            const result = findProjectRootFromPath(filePath);
+            
+            assert.strictEqual(result, null);
+        });
+
+        test('returns null for empty path', () => {
+            const result = findProjectRootFromPath('');
+            assert.strictEqual(result, null);
+        });
+    });
+
+    suite('setProjectContextFromFile', () => {
+        test('sets project context when valid file path provided', () => {
+            setTestEnv(testDir);
+            createMockALProject(testDir, { appJson: fixtures.appJson });
+            
+            const filePath = join(testDir, 'src', 'TestCodeunit.al');
+            const result = setProjectContextFromFile(filePath);
+            
+            assert.strictEqual(result, testDir);
+            assert.ok(getCurrentProjectContext()?.includes(testDir.toLowerCase()) || getCurrentProjectContext() === testDir);
+        });
+
+        test('returns null and does not set context for invalid path', () => {
+            clearProjectContext();
+            
+            const filePath = '/nonexistent/path/to/file.al';
+            const result = setProjectContextFromFile(filePath);
+            
+            assert.strictEqual(result, null);
+        });
+    });
+
+    suite('getProjectPath with context', () => {
+        // Helper to compare paths in a case-insensitive way (for Windows)
+        function pathsEqual(a: string, b: string): boolean {
+            if (process.platform === 'win32') {
+                return a.toLowerCase() === b.toLowerCase();
+            }
+            return a === b;
+        }
+
+        test('uses context path when provided as parameter', () => {
+            setTestEnv(testDir);
+            createMockALProject(testDir, { appJson: fixtures.appJson });
+            
+            const filePath = join(testDir, 'src', 'TestCodeunit.al');
+            const result = getProjectPath(filePath);
+            
+            assert.strictEqual(result, testDir);
+        });
+
+        test('uses current context when no parameter and context is set', () => {
+            setTestEnv(testDir);
+            createMockALProject(testDir, { appJson: fixtures.appJson });
+            
+            // Set context first
+            setProjectContextFromFile(join(testDir, 'src', 'TestCodeunit.al'));
+            
+            // Then getProjectPath should use the context
+            const result = getProjectPath();
+            // On Windows, paths are normalized to lowercase for comparison
+            assert.ok(pathsEqual(result, testDir), `Expected ${result} to equal ${testDir}`);
+        });
+
+        test('context takes priority over environment variable', () => {
+            // Create two projects
+            const project1Dir = createTestDir();
+            const project2Dir = createTestDir();
+            
+            try {
+                createMockALProject(project1Dir, { appJson: fixtures.appJson });
+                createMockALProject(project2Dir, { appJson: { ...fixtures.appJson, name: 'Project 2' } });
+                
+                // Set env to point to project1
+                setTestEnv(project1Dir);
+                
+                // But set context to project2
+                setProjectContextFromFile(join(project2Dir, 'src', 'TestCodeunit.al'));
+                
+                // getProjectPath should use the context (project2)
+                const result = getProjectPath();
+                // On Windows, paths are normalized to lowercase for comparison
+                assert.ok(pathsEqual(result, project2Dir), `Expected ${result} to equal ${project2Dir}`);
+            } finally {
+                cleanupTestDir(project1Dir);
+                cleanupTestDir(project2Dir);
+            }
+        });
+    });
+
+    suite('getMCPSettings with context', () => {
+        test('loads settings from context-specific project', () => {
+            // Create two projects with different settings
+            const project1Dir = createTestDir();
+            const project2Dir = createTestDir();
+            
+            try {
+                createMockALProject(project1Dir, { 
+                    appJson: fixtures.appJson,
+                    mcpSettings: { containerName: 'container1', extensionName: 'Project 1' }
+                });
+                createMockALProject(project2Dir, { 
+                    appJson: { ...fixtures.appJson, name: 'Project 2' },
+                    mcpSettings: { containerName: 'container2', extensionName: 'Project 2' }
+                });
+                
+                // Set context to project2
+                setProjectContextFromFile(join(project2Dir, 'src', 'TestCodeunit.al'));
+                
+                // getMCPSettings should load from project2
+                const settings = getMCPSettings();
+                assert.strictEqual(settings?.containerName, 'container2');
+                assert.strictEqual(settings?.extensionName, 'Project 2');
+            } finally {
+                cleanupTestDir(project1Dir);
+                cleanupTestDir(project2Dir);
+            }
+        });
+
+        test('caches settings per project path', () => {
+            // Create two projects
+            const project1Dir = createTestDir();
+            const project2Dir = createTestDir();
+            
+            try {
+                createMockALProject(project1Dir, { 
+                    appJson: fixtures.appJson,
+                    mcpSettings: { containerName: 'container1' }
+                });
+                createMockALProject(project2Dir, { 
+                    appJson: { ...fixtures.appJson, name: 'Project 2' },
+                    mcpSettings: { containerName: 'container2' }
+                });
+                
+                // Load settings for project1
+                setProjectContextFromFile(join(project1Dir, 'src', 'Test.al'));
+                const settings1 = getMCPSettings();
+                assert.strictEqual(settings1?.containerName, 'container1');
+                
+                // Load settings for project2
+                setProjectContextFromFile(join(project2Dir, 'src', 'Test.al'));
+                const settings2 = getMCPSettings();
+                assert.strictEqual(settings2?.containerName, 'container2');
+                
+                // Go back to project1 - should use cached settings
+                setProjectContextFromFile(join(project1Dir, 'src', 'Test.al'));
+                const settings1Again = getMCPSettings();
+                assert.strictEqual(settings1Again?.containerName, 'container1');
+            } finally {
+                cleanupTestDir(project1Dir);
+                cleanupTestDir(project2Dir);
+            }
+        });
+    });
+
+    suite('Multi-Root Workspace Scenario', () => {
+        // This test simulates the exact issue reported by the user:
+        // - Multiple projects in a workspace
+        // - Each project has its own mcp-settings.json with different extensionName
+        // - When running tests from project B, settings from project B should be used
+        
+        test('simulates multi-root workspace with different extension names', () => {
+            // Create two projects simulating the user's scenario
+            const advancedPricingDir = createTestDir();
+            const reusablePackagingDir = createTestDir();
+            
+            try {
+                // Project 1: Advanced Pricing (similar to user's setup)
+                createMockALProject(advancedPricingDir, { 
+                    appJson: { 
+                        id: '11111111-1111-1111-1111-111111111111',
+                        name: 'Dynavision Advanced Pricing',
+                        publisher: 'Dynavision',
+                        version: '1.0.0.0',
+                    },
+                    mcpSettings: { 
+                        containerName: 'bcserver',
+                        extensionName: 'Dynavision Advanced Pricing & Discounts-Test',
+                        extensionId: '11111111-1111-1111-1111-111111111111'
+                    }
+                });
+                
+                // Project 2: Reusable Packaging (the target project)
+                createMockALProject(reusablePackagingDir, { 
+                    appJson: { 
+                        id: '22222222-2222-2222-2222-222222222222',
+                        name: 'Dynavision Reusable Packaging',
+                        publisher: 'Dynavision',
+                        version: '1.0.0.0',
+                    },
+                    mcpSettings: { 
+                        containerName: 'bcserver',
+                        extensionName: 'Dynavision Reusable Packaging-Test',
+                        extensionId: 'ac1c49ee-fc75-4d5f-8411-4137010ae690'
+                    }
+                });
+                
+                // Simulate: Initially, context might be set to Advanced Pricing
+                setProjectContextFromFile(join(advancedPricingDir, 'src', 'Test.al'));
+                
+                let settings = getMCPSettings();
+                assert.strictEqual(settings?.extensionName, 'Dynavision Advanced Pricing & Discounts-Test');
+                
+                // Simulate: Now user runs test from Reusable Packaging via filename
+                // This is exactly what run_test_codeunit does
+                const testFilePath = join(reusablePackagingDir, 'src', 'ContainerDepositMgt', 'Warehouse', 'TestWhseReceiptPosting.codeunit.al');
+                setProjectContextFromFile(testFilePath);
+                
+                // After setting context from the test file, settings should be from Reusable Packaging
+                settings = getMCPSettings();
+                assert.strictEqual(settings?.extensionName, 'Dynavision Reusable Packaging-Test');
+                assert.strictEqual(settings?.extensionId, 'ac1c49ee-fc75-4d5f-8411-4137010ae690');
+                
+                // Also verify getProjectPath returns the correct project
+                const projectPath = getProjectPath();
+                assert.ok(
+                    projectPath.toLowerCase().includes(reusablePackagingDir.toLowerCase()) ||
+                    reusablePackagingDir.toLowerCase().includes(projectPath.toLowerCase()),
+                    `Expected ${projectPath} to be ${reusablePackagingDir}`
+                );
+            } finally {
+                cleanupTestDir(advancedPricingDir);
+                cleanupTestDir(reusablePackagingDir);
+            }
+        });
+
+        test('extensionName from mcp-settings takes priority over app.json', () => {
+            const projectDir = createTestDir();
+            
+            try {
+                // Create project where app.json has one name, but mcp-settings has a different name
+                createMockALProject(projectDir, { 
+                    appJson: { 
+                        id: '33333333-3333-3333-3333-333333333333',
+                        name: 'App Name From AppJson',
+                        publisher: 'Test',
+                        version: '1.0.0.0',
+                    },
+                    mcpSettings: { 
+                        containerName: 'bcserver',
+                        extensionName: 'Override Extension Name-Test',
+                        extensionId: '44444444-4444-4444-4444-444444444444'
+                    }
+                });
+                
+                setProjectContextFromFile(join(projectDir, 'src', 'Test.al'));
+                
+                const settings = getMCPSettings();
+                const appJson = getAppJson();
+                
+                // MCP settings should have the override name
+                assert.strictEqual(settings?.extensionName, 'Override Extension Name-Test');
+                
+                // app.json should still have its original name
+                assert.strictEqual(appJson?.name, 'App Name From AppJson');
+                
+                // The effective extension name should be from MCP settings (priority)
+                const effectiveExtensionName = settings?.extensionName || appJson?.name;
+                assert.strictEqual(effectiveExtensionName, 'Override Extension Name-Test');
+            } finally {
+                cleanupTestDir(projectDir);
+            }
         });
     });
 });

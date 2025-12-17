@@ -80,6 +80,7 @@ Once enabled, you can use natural language prompts with your AI assistant:
 | `publish_and_test` | Publish and run all tests (ideal for TDD) |
 | `create_mcp_settings` | Configure MCP settings for multi-root workspaces |
 | `get_mcp_settings` | View current configuration and diagnostics |
+| `debug_project_context` | Troubleshoot multi-root workspace issues |
 | `update_test_decorations` | Trigger VS Code to refresh test decorations |
 
 ### Requirements for MCP
@@ -91,15 +92,28 @@ Once enabled, you can use natural language prompts with your AI assistant:
 
 ### Configuration (Optional)
 
-For multi-root workspaces or when automatic detection fails, create `.altestrunner/mcp-settings.json`:
+For multi-root workspaces or when automatic detection fails, create `.altestrunner/mcp-settings.json` in each project:
 
 ```json
 {
   "containerName": "your-bc-container-name",
   "projectPath": "C:/path/to/your/al/project",
-  "outputFolder": ".output"
+  "outputFolder": ".output",
+  "extensionName": "Your Extension Name",
+  "extensionId": "your-extension-guid"
 }
 ```
+
+**Multi-Root Workspace Settings:**
+- `extensionName` - Overrides the name from `app.json` (useful for test extensions with different names)
+- `extensionId` - Overrides the ID from `app.json`
+
+The MCP automatically detects the correct project based on the file path when running tests. Each project should have its own `mcp-settings.json` in its `.altestrunner` folder.
+
+**Troubleshooting Multi-Root Issues:**
+If tests run against the wrong extension, use the `debug_project_context` tool:
+- *"Debug project context for file [path-to-test-file]"*
+- This shows which project is detected and what settings are being used
 
 Or use the AI assistant: *"Configure the MCP settings for container 'bcserver'"*
 
