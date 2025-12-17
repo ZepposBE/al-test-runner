@@ -1,0 +1,14 @@
+[
+  { "ObjectType": "Codeunit", "ObjectID": "50100", "LineType": "Code", "LineNo": "10", "NoOfHits": "5" },
+  { "ObjectType": "Codeunit", "ObjectID": "50100", "LineType": "Code", "LineNo": "11", "NoOfHits": "5" },
+  { "ObjectType": "Codeunit", "ObjectID": "50100", "LineType": "Code", "LineNo": "12", "NoOfHits": "0" },
+  { "ObjectType": "Codeunit", "ObjectID": "50100", "LineType": "Code", "LineNo": "13", "NoOfHits": "0" },
+  { "ObjectType": "Codeunit", "ObjectID": "50100", "LineType": "Empty", "LineNo": "14", "NoOfHits": "0" },
+  { "ObjectType": "Codeunit", "ObjectID": "50101", "LineType": "Code", "LineNo": "5", "NoOfHits": "10" },
+  { "ObjectType": "Codeunit", "ObjectID": "50101", "LineType": "Code", "LineNo": "6", "NoOfHits": "10" },
+  { "ObjectType": "Codeunit", "ObjectID": "50101", "LineType": "Code", "LineNo": "7", "NoOfHits": "10" },
+  { "ObjectType": "Table", "ObjectID": "50100", "LineType": "Code", "LineNo": "5", "NoOfHits": "10" },
+  { "ObjectType": "Table", "ObjectID": "50100", "LineType": "Code", "LineNo": "6", "NoOfHits": "10" },
+  { "ObjectType": "Table", "ObjectID": "50100", "LineType": "Code", "LineNo": "7", "NoOfHits": "0" }
+]
+

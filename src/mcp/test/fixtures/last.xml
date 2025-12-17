@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assemblies>
+  <assembly name="50100 Test Codeunit" run-date="2024-01-15" run-time="10:30:00" total="4" passed="3" failed="1" skipped="0" time="1.234">
+    <collection name="Test Codeunit" total="4" passed="3" failed="1" skipped="0" time="1.234">
+      <test name="Test Codeunit.TestOne" method="TestOne" result="Pass" time="0.100" />
+      <test name="Test Codeunit.TestTwo" method="TestTwo" result="Pass" time="0.200" />
+      <test name="Test Codeunit.TestThree" method="TestThree" result="Pass" time="0.300" />
+      <test name="Test Codeunit.TestFour" method="TestFour" result="Fail" time="0.634">
+        <failure>
+          <message>Assert.AreEqual failed. Expected: &lt;100&gt; Actual: &lt;0&gt;</message>
+          <stack-trace>"Test Codeunit"(CodeUnit 50100).TestFour line 45</stack-trace>
+        </failure>
+      </test>
+    </collection>
+  </assembly>
+</assemblies>

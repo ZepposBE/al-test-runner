@@ -13,7 +13,7 @@
 		"url": "https://github.com/jimmymcp/al-test-runner"
 	},
 	"icon": "semicolon128.jpg",
-	"version": "10.16.0",
+	"version": "10.17.0",
 	"engines": {
 		"vscode": ">=1.93.0"
 	},
@@ -429,6 +429,12 @@
 						"scope": "resource",
 						"description": "Enable verbose output for PowerShell commands",
 						"default": false
+					},
+					"al-test-runner.enableMCP": {
+						"type": "boolean",
+						"scope": "resource",
+						"description": "Enable MCP (Model Context Protocol) server for AI assistant integration in your IDE. Requires extension restart.",
+						"default": false
 					}
 				}
 			}
@@ -451,22 +457,26 @@
 		"compile": "tsc -p ./",
 		"watch": "tsc -watch -p ./",
 		"pretest": "npm run compile",
-		"test": "node ./out/test/runTest.js"
+		"test": "node ./out/test/runTest.js",
+		"test:mcp": "npm run compile && mocha --ui tdd --timeout 10000 ./out/mcp/test/**/*.test.js",
+		"test:mcp:watch": "npm run compile && mocha --ui tdd --timeout 10000 --watch ./out/mcp/test/**/*.test.js"
 	},
 	"devDependencies": {
 		"@types/glob": "^7.1.4",
 		"@types/mocha": "^5.2.6",
-		"@types/node": "^10.17.60",
+		"@types/node": "^18.0.0",
 		"@types/sinon": "^7.5.2",
 		"@types/vscode": "^1.93.0",
 		"@vscode/test-electron": "^2.3.9",
 		"glob": "^7.1.7",
 		"mocha": "^10.8.2",
 		"sinon": "^7.5.0",
+		"ts-node": "^10.9.2",
 		"tslint": "^5.20.1",
-		"typescript": "^4.6.3"
+		"typescript": "^5.7.0"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.0.0",
 		"@types/xml2js": "^0.4.9",
 		"@vscode/extension-telemetry": "0.5.0",
 		"sanitize-filename": "^1.6.3",

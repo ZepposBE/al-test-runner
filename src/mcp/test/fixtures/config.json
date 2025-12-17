@@ -1,0 +1,16 @@
+{
+  "launchConfigName": "Your own server",
+  "containerResultPath": "C:\\ProgramData\\BcContainerHelper\\Extensions\\bcserver",
+  "userName": "admin",
+  "securePassword": "",
+  "companyName": "CRONUS USA, Inc.",
+  "testSuiteName": "DEFAULT",
+  "vmUserName": "",
+  "vmSecurePassword": "",
+  "remoteContainerName": "",
+  "dockerHost": "",
+  "newPSSessionOptions": "",
+  "testRunnerServiceUrl": "",
+  "codeCoveragePath": ""
+}
+

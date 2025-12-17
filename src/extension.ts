@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync, watch, FSWatcher } from 'fs';
 import * as xml2js from 'xml2js';
 import * as types from './types';
-import { CodelensProvider } from './codeLensProvider';
+import { CodelensProvider } from './CodelensProvider';
 import { updateCodeCoverageDecoration, createCodeCoverageStatusBarItem } from './coverage';
 import { documentIsTestCodeunit, getALFilesInWorkspace, getDocumentIdAndName, getTestMethodRangesFromDocument } from './alFileHelper';
 import { getALTestRunnerPath, getCurrentWorkspaceConfig, getDebugConfigurationsFromLaunchJson, getLaunchJsonPath, getTestFolderFromConfig, getWorkspaceFolder } from './config';
@@ -20,6 +20,7 @@ import { createHEADFileWatcherForTestWorkspaceFolder } from './git';
 import { createPerformanceStatusBarItem } from './performance';
 import { executeWithShellIntegration } from './terminalExecutor';
 import { ensureTestCoverageLoaded } from './testCoverage';
+import * as mcp from './mcp';
 
 let terminal: vscode.Terminal;
 export let activeEditor = vscode.window.activeTextEditor;
@@ -60,11 +61,71 @@ const failingLineDecorationType = vscode.window.createTextEditorDecorationType({
 });
 
 export const outputChannel = vscode.window.createOutputChannel(getTerminalName());
-let updateDecorationsTimeout: NodeJS.Timer | undefined = undefined;
-let discoverTestsTimeout: NodeJS.Timer | undefined = undefined;
+let updateDecorationsTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
+let discoverTestsTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
 
 export let alTestController: vscode.TestController;
 export let telemetryReporter: TelemetryReporter;
+let decorationTriggerWatcher: FSWatcher | undefined;
+
+/**
+ * Watch for decoration trigger file from MCP server
+ * When the trigger file is detected, update decorations if the setting is enabled
+ */
+function watchDecorationTrigger(): void {
+	const alTestRunnerPath = getALTestRunnerPath();
+	const triggerPath = join(alTestRunnerPath, 'trigger-decorations');
+	
+	// Stop existing watcher if any
+	if (decorationTriggerWatcher) {
+		decorationTriggerWatcher.close();
+		decorationTriggerWatcher = undefined;
+	}
+	
+	// Ensure the .altestrunner directory exists before watching
+	if (!existsSync(alTestRunnerPath)) {
+		// Directory doesn't exist yet, we'll try again later when it's created
+		// This can happen on fresh workspaces
+		console.log('[AL Test Runner] .altestrunner directory does not exist yet, skipping decoration trigger watcher');
+		return;
+	}
+	
+	try {
+		console.log(`[AL Test Runner] Setting up decoration trigger watcher on: ${alTestRunnerPath}`);
+		decorationTriggerWatcher = watch(alTestRunnerPath, (eventType, filename) => {
+			// Process when the trigger file is created/changed
+			// Check for both 'rename' (file creation) and 'change' (file modification) events
+			if (filename === 'trigger-decorations') {
+				// Check if the file exists (rename event fires for both create and delete)
+				if (existsSync(triggerPath)) {
+					console.log('[AL Test Runner] Decoration trigger file detected');
+					
+					// Check if decorateTestMethods setting is enabled
+					const config = getCurrentWorkspaceConfig();
+					if (config.decorateTestMethods) {
+						console.log('[AL Test Runner] Triggering decoration update');
+						triggerUpdateDecorations();
+					} else {
+						console.log('[AL Test Runner] decorateTestMethods is disabled, skipping decoration update');
+					}
+					
+					// Always clean up the trigger file
+					try {
+						unlinkSync(triggerPath);
+					} catch (e) {
+						// Ignore errors when deleting - file might already be deleted
+					}
+				}
+			}
+		});
+		
+		decorationTriggerWatcher.on('error', (error) => {
+			console.error('[AL Test Runner] Error watching decoration trigger:', error);
+		});
+	} catch (error) {
+		console.error('[AL Test Runner] Failed to set up decoration trigger watcher:', error);
+	}
+}
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('jamespearson.al-test-runner extension is activated');
@@ -128,6 +189,29 @@ export function activate(context: vscode.ExtensionContext) {
 	alTestController = createTestController();
 	context.subscriptions.push(alTestController);
 	discoverTests();
+
+	// Start MCP server if enabled
+	const mcpConfig = vscode.workspace.getConfiguration('al-test-runner');
+	if (mcpConfig.get('enableMCP')) {
+		mcp.startMCPServer(context.extensionPath);
+	}
+
+	// Watch for MCP setting changes
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('al-test-runner.enableMCP')) {
+				const enabled = vscode.workspace.getConfiguration('al-test-runner').get('enableMCP');
+				if (enabled) {
+					mcp.startMCPServer(context.extensionPath);
+				} else {
+					mcp.stopMCPServer();
+				}
+			}
+		})
+	);
+
+	// Watch for decoration trigger file from MCP server
+	watchDecorationTrigger();
 }
 
 export async function invokeTestRunner(command: string, options: types.invokeTestRunnerOptions): Promise<types.ALTestAssembly[]> {
@@ -538,4 +622,13 @@ function getLastResultPath(): string {
 }
 
 // this method is called when your extension is deactivated
-export function deactivate() { }
+export function deactivate() {
+	// Stop MCP server if running
+	mcp.stopMCPServer();
+	
+	// Stop decoration trigger watcher
+	if (decorationTriggerWatcher) {
+		decorationTriggerWatcher.close();
+		decorationTriggerWatcher = undefined;
+	}
+}

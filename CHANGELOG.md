@@ -1,5 +1,14 @@
 # Change Log
 
+## 10.17.0 - This is not an official release version, this is just a number to add a .vsix for testing
+
+- **MCP Server for AI Integration**: New Model Context Protocol (MCP) server enables AI assistants (Cursor, Copilot, etc.) to run and manage AL tests
+  - Enable with `al-test-runner.enableMCP` setting
+  - **Tools**: `run_all_tests`, `run_test_codeunit`, `run_single_test`, `list_test_codeunits`, `get_test_results`, `get_code_coverage`, `publish_extension`, `publish_and_test`
+  - **Resources**: Access test results, code coverage, and configuration via MCP resource URIs
+  - **Settings management**: `create_mcp_settings` and `get_mcp_settings` tools for multi-root workspace configuration
+  - Real-time progress notifications during test execution
+
 ## 10.16.0
 - Enhanced error handling for test execution failures
 - Real-time test progress updates in Test Results panel

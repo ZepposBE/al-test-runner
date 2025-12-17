@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Your own server",
+      "request": "launch",
+      "type": "al",
+      "server": "http://bcserver/",
+      "serverInstance": "BC",
+      "authentication": "UserPassword",
+      "startupObjectId": 22,
+      "startupObjectType": "Page"
+    },
+    {
+      "name": "Cloud sandbox",
+      "request": "launch",
+      "type": "al",
+      "environmentType": "Sandbox",
+      "environmentName": "MySandbox",
+      "startupObjectId": 22,
+      "startupObjectType": "Page"
+    }
+  ]
+}
+

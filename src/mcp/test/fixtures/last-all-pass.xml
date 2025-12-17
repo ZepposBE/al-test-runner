@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assemblies>
+  <assembly name="50100 Test Codeunit" run-date="2024-01-15" run-time="10:30:00" total="3" passed="3" failed="0" skipped="0" time="0.600">
+    <collection name="Test Codeunit" total="3" passed="3" failed="0" skipped="0" time="0.600">
+      <test name="Test Codeunit.TestOne" method="TestOne" result="Pass" time="0.100" />
+      <test name="Test Codeunit.TestTwo" method="TestTwo" result="Pass" time="0.200" />
+      <test name="Test Codeunit.TestThree" method="TestThree" result="Pass" time="0.300" />
+    </collection>
+  </assembly>
+</assemblies>
